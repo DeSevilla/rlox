@@ -41,7 +41,7 @@ impl Parser {
         None
     }
 
-    fn expression(&mut self) -> Expr {
+    pub fn expression(&mut self) -> Expr {
         self.equality()
     }
 

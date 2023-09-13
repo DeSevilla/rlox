@@ -18,9 +18,10 @@ fn run(source: &String) {
         had_error = true;
         println!("Got errors while scanning: {errors:?}");
     }
-    println!("{source} parses to {tokens:?}");
+    println!("{source} scans to {tokens:?}");
     let mut parser = parser::Parser::new(tokens);
-
+    let tree = parser.expression();
+    println!("Tokens parse to {tree:?}");
     if had_error {
         println!("Not running due to errors");
     }

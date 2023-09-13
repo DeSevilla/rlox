@@ -60,7 +60,7 @@ impl fmt::Display for Token {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Binary { left: Box<Expr>, op: Token, right: Box<Expr> },
     Unary { op: Token, right: Box<Expr> },
