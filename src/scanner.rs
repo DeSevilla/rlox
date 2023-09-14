@@ -168,15 +168,11 @@ impl Scanner<'_> {
                         self.advance();
                     }
                 } else { self.add_token(TokTy::Slash) },
-            ' ' => (),
-            '\r' => (),
-            '\t' => (),
+            ' ' | '\r' | '\t' => (),
             '\n' => { self.line += 1 }
             '"' => self.string(),
             '0'..='9' => self.number(),
-            '_' => self.identifier(),
-            'A'..='Z' => self.identifier(),
-            'a'..='z' => self.identifier(),
+            '_' | 'A'..='Z' | 'a'..='z' => self.identifier(),
             x => self.add_error(ErrorType::InvalidChar, x.to_string())
         }
         Some(())
@@ -187,12 +183,12 @@ impl Scanner<'_> {
             self.current = "".into();
             self.scan_token();
         }
-        self.tokens.push(Ok(Token {
-            ty: TokTy::EOF,
-            lexeme: "".into(),
-            line: self.line,
-            literal: Literal::None,
-        }));
+        // self.tokens.push(Ok(Token {
+        //     ty: TokTy::EOF,
+        //     lexeme: "".into(),
+        //     line: self.line,
+        //     literal: Literal::None,
+        // }));
         self.tokens
     }
 }

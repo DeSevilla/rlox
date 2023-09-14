@@ -43,6 +43,7 @@ pub enum TokTy {
 pub enum Literal {
     Num(f64),
     Str(String),
+    Bool(bool),
     None
 }
 
@@ -72,17 +73,17 @@ impl Expr {
     pub fn parenthesize(&self) -> String {
         let mut output = "(".to_owned();
         output = match self {
-            Expr::Binary { left, op, right } => output + &op.lexeme + " " + &left.parenthesize() + " " + &right.parenthesize(),
-            Expr::Unary { op, right } => output + &op.lexeme + " " + &right.parenthesize(),
-            Expr::Grouping(ex) => output + "group " + &ex.parenthesize(),
+            Expr::Binary { left, op, right } => output + &op.lexeme + " " + &left.parenthesize() + " " + &right.parenthesize() + ")",
+            Expr::Unary { op, right } => output + &op.lexeme + " " + &right.parenthesize() + ")",
+            Expr::Grouping(ex) => output + "group " + &ex.parenthesize() + ")",
             Expr::Literal(lit) => match lit {
-                Literal::Num(n) => output + &n.to_string(),
-                Literal::Str(s) => output + &s,
-                Literal::None => output,
+                Literal::Num(n) => n.to_string(),
+                Literal::Str(s) => { let mut s = s.clone(); s.insert(0, '"'); s.push('"'); s },
+                Literal::Bool(b) => b.to_string(),
+                Literal::None => "nil".to_owned(),
             },
             // _ => output,
         };
-        output += ")";
         output
     }
 

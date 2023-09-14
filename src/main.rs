@@ -7,9 +7,9 @@ pub mod scanner;
 pub mod parser;
 
 
-fn run(source: &String) {
+fn run(source: String) {
     let mut had_error = false;
-    let results = scanner::Scanner::new(source).scan();
+    let results = scanner::Scanner::new(&source).scan();
     println!("{}", Expr::test());
     let (tokens, errors): (Vec<Token>, Vec<RloxError>) = results.into_iter().partition_result();
     // let tokens: Vec<_> = tokens.into_iter().filter_map(|x| x.ok()).collect();
@@ -19,11 +19,16 @@ fn run(source: &String) {
         println!("Got errors while scanning: {errors:?}");
     }
     println!("{source} scans to {tokens:?}");
-    let mut parser = parser::Parser::new(tokens);
-    let tree = parser.expression();
+    let tree = parser::Parser::new(tokens).parse();
     println!("Tokens parse to {tree:?}");
     if had_error {
         println!("Not running due to errors");
+    }
+    else {
+        match tree {
+            Ok(ast) => println!("Parses to: {}", ast.parenthesize()),
+            Err(e) => println!("Got error while parsing: {e}"),
+        }
     }
 }
 
@@ -31,7 +36,7 @@ fn run_prompt() {
     let stdin = io::stdin();
     for line in stdin.lines() {
         match line {
-            Ok(text) => if text.len() > 0 { run(&text)} else { break },
+            Ok(text) => if text.len() > 0 { run(text)} else { break },
             Err(e) => { println!("{e}"); break }
         }
     }
@@ -39,7 +44,7 @@ fn run_prompt() {
 
 fn run_file(name: &str) {
     let contents = fs::read_to_string(name).expect("Could not read file");
-    run(&contents);
+    run(contents);
 }
 
 fn main() {
