@@ -19,10 +19,10 @@ impl Parser {
         self.expression()
     }
 
-    fn error(&mut self, ty: ErrorType, msg: String) -> RloxError {
-        let line = self.previous.as_ref().map(|t| t.line).unwrap_or(0);
+    fn error(&mut self, tok: Option<Token>, msg: String) -> RloxError {
+        let line = tok.map(|t| t.line).unwrap_or(0);
         return RloxError {
-            ty,
+            ty: ErrorType::ParseError,
             line,
             info: "parser".into(),
             msg
@@ -55,6 +55,24 @@ impl Parser {
             }
         }
         None
+    }
+
+    fn synchronize(&mut self) {
+        while let Some(tok) = self.advance() {
+            if tok.ty == TokTy::Semicolon {
+                return
+            }
+            else {
+                match self.lookahead(0) {
+                    Some(t) => match t.ty {
+                        TokTy::Class | TokTy::Fun | TokTy::Var | TokTy::For 
+                            | TokTy::If | TokTy::While | TokTy::Print | TokTy::Return => return,
+                        _ => (),
+                    }
+                    None => (),
+                }
+            }
+        }
     }
 
     fn expression(&mut self) -> Result<Expr, RloxError> {
@@ -109,11 +127,12 @@ impl Parser {
                     self.match_ty([TokTy::RightParen].into_iter());
                     Ok(Expr::Grouping(Box::new(e)))
                 }
-                _ => Err(self.error(ErrorType::ParseError, "Unreachable token type mismatch".into()))
+                _ => {let tok = self.lookahead(0).cloned(); Err(self.error(tok, "Unreachable token type mismatch".into())) }
             }
         }
         else {
-            Err(self.error(ErrorType::ParseError, "Expect expression".into()))
+            let tok = self.lookahead(0).cloned();
+            Err(self.error(tok, "Expect expression".into()))
         }
     }
 

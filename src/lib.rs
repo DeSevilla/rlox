@@ -4,6 +4,8 @@ use std::fmt;
 pub enum ErrorType {
     InvalidChar,
     ParseError,
+    TypeError,
+    ValueError,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -12,6 +14,12 @@ pub struct RloxError {
     pub line: usize, 
     pub info: String,
     pub msg: String
+}
+
+impl RloxError {
+    fn new_err<T>(ty: ErrorType, line: usize, info: impl Into<String>, msg: impl Into<String>) -> Result<T, RloxError> {
+        Err(RloxError { ty: ty, line: line, info: info.into(), msg: msg.into() })
+    }
 }
 
 impl fmt::Display for RloxError {
@@ -45,6 +53,51 @@ pub enum Literal {
     Str(String),
     Bool(bool),
     None
+}
+
+impl Literal {
+    fn is_truthy(&self) -> bool {
+        match self {
+            Self::Bool(b) => *b,
+            Self::None => false,
+            _ => true,
+        }
+    }
+
+    fn as_num(&self) -> Result<f64, RloxError> {
+        match self {
+            Self::Num(x) => Ok(*x),
+            _ => RloxError::new_err(ErrorType::TypeError, 0, "", format!("{self:?} is not a Num"))
+        }
+    }
+
+    fn as_bool(&self) -> Result<bool, RloxError> {
+        match self {
+            Self::Bool(x) => Ok(*x),
+            _ => RloxError::new_err(ErrorType::TypeError, 0, "", format!("{self:?} is not a Bool"))
+        }
+    }
+
+    fn as_string(&self) -> Result<String, RloxError> {
+        match self {
+            Self::Str(x) => Ok(x.clone()),
+            _ => RloxError::new_err(ErrorType::TypeError, 0, "", format!("{self:?} is not a String"))
+        }
+    }
+}
+
+impl ToString for Literal {
+    fn to_string(&self) -> String {
+        match self {
+            Self::None => "nil".to_owned(),
+            Self::Bool(b) => b.to_string(),
+            Self::Num(x) => {
+                let s = x.to_string();
+                s.trim_end_matches(".0").to_owned()
+            },
+            Self::Str(x) => "\"".to_owned() + x + "\"",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +138,58 @@ impl Expr {
             // _ => output,
         };
         output
+    }
+
+    pub fn evaluate(self) -> Result<Literal, RloxError> {
+        match self {
+            Expr::Literal(lit) => Ok(lit),
+            Expr::Grouping(e) => e.evaluate(),
+            Expr::Unary { op, right } => {
+                let right = right.evaluate()?;
+                match op.ty {
+                    TokTy::Minus => Ok(Literal::Num(-right.as_num()?)), 
+                    TokTy::Bang => Ok(Literal::Bool(!right.is_truthy())),
+                    _ => RloxError::new_err(ErrorType::ValueError, op.line, "", "Unreachable invalid unary operation")
+                }
+            }
+            Expr::Binary { left, op, right } => {
+                let left = left.evaluate()?;
+                let right = right.evaluate()?;
+                match op.ty {
+                    TokTy::Minus => {
+                        Ok(Literal::Num(left.as_num()? - right.as_num()?))
+                    },
+                    TokTy::Star => {
+                        Ok(Literal::Num(left.as_num()? * right.as_num()?))
+                    },
+                    TokTy::Slash => {
+                        Ok(Literal::Num(left.as_num()? / right.as_num()?))
+                    },
+                    TokTy::Plus => {
+                        match (left, right) {
+                            (Literal::Num(l), Literal::Num(r)) => Ok(Literal::Num(l + r)),
+                            (Literal::Str(l), Literal::Str(r)) => Ok(Literal::Str(l + &r)),
+                            _ => RloxError::new_err(ErrorType::TypeError, op.line, "", "Arguments to + must be either Num or String"),
+                        }
+                    },
+                    TokTy::Greater => {
+                        Ok(Literal::Bool(left.as_num()? > right.as_num()?))
+                    },
+                    TokTy::GreaterEqual => {
+                        Ok(Literal::Bool(left.as_num()? >= right.as_num()?))
+                    },
+                    TokTy::Less => {
+                        Ok(Literal::Bool(left.as_num()? < right.as_num()?))
+                    },
+                    TokTy::LessEqual => {
+                        Ok(Literal::Bool(left.as_num()? <= right.as_num()?))
+                    },
+                    TokTy::BangEqual => Ok(Literal::Bool(left != right)),
+                    TokTy::EqualEqual => Ok(Literal::Bool(left == right)),
+                    _ => RloxError::new_err(ErrorType::ValueError, op.line, "", "Unreachable invalid binary operation")
+                }
+            }
+        }
     }
 
     pub fn test() -> String {
