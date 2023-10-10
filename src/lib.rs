@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{fmt, collections::HashMap};
 
 #[derive(Debug, Eq, PartialEq, Clone, Copy)]
 pub enum ErrorType {
@@ -116,10 +116,12 @@ impl fmt::Display for Token {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
+    Assign { name: Token, value: Box<Expr> },
     Binary { left: Box<Expr>, op: Token, right: Box<Expr> },
     Unary { op: Token, right: Box<Expr> },
     Grouping(Box<Expr>),
     Literal(Literal),
+    Variable(Token),
 }
 
 impl Expr {
@@ -135,26 +137,70 @@ impl Expr {
                 Literal::Bool(b) => b.to_string(),
                 Literal::None => "nil".to_owned(),
             },
+            Expr::Variable(v) => output + "var " + &v.lexeme + ")",
+            Expr::Assign { name, value } => output + &name.lexeme + " = " + &value.parenthesize() + ")",
             // _ => output,
         };
         output
     }
 
-    pub fn evaluate(self) -> Result<Literal, RloxError> {
-        match self {
+    pub fn test() -> String {
+        let tree = Expr::Binary { 
+            left: Box::new(Expr::Unary { 
+                op: Token { ty: TokTy::Minus, lexeme: "-".into(), literal: Literal::None, line: 1 }, 
+                right: Box::new(Expr::Literal(Literal::Num(123.0))) 
+            }), 
+            op: Token { ty: TokTy::Star, lexeme: "*".into(), literal: Literal::None, line: 1 }, 
+            right: Box::new(Expr::Grouping(
+                Box::new(Expr::Literal(Literal::Num(45.67)))
+            ))
+        };
+        tree.parenthesize()
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Stmt {
+    Expression(Expr),
+    Print(Expr),
+    Var { name: Token, initializer: Expr }
+}
+
+pub struct Interpreter {
+    env: Environment,
+}
+
+impl Interpreter {
+    pub fn new() -> Interpreter {
+        Interpreter {
+            env: Environment::new(),
+        }
+    }
+
+    pub fn evaluate(&mut self, expr: Expr) -> Result<Literal, RloxError> {
+        match expr {
             Expr::Literal(lit) => Ok(lit),
-            Expr::Grouping(e) => e.evaluate(),
+            Expr::Grouping(e) => self.evaluate(*e),
+            Expr::Variable(name) => match self.env.get(&name.lexeme) {
+                Some(lit) => Ok(lit.clone()),
+                None => RloxError::new_err(ErrorType::ValueError, name.line, "", format!("Variable {} is undefined", name.lexeme))
+            }
+            Expr::Assign { name, value } => {
+                let val = self.evaluate(*value)?;
+                self.env.assign(name, val.clone())?;
+                Ok(val)
+            }
             Expr::Unary { op, right } => {
-                let right = right.evaluate()?;
+                let right = self.evaluate(*right)?;
                 match op.ty {
                     TokTy::Minus => Ok(Literal::Num(-right.as_num()?)), 
                     TokTy::Bang => Ok(Literal::Bool(!right.is_truthy())),
-                    _ => RloxError::new_err(ErrorType::ValueError, op.line, "", "Unreachable invalid unary operation")
+                    _ => unreachable!()
                 }
             }
             Expr::Binary { left, op, right } => {
-                let left = left.evaluate()?;
-                let right = right.evaluate()?;
+                let left = self.evaluate(*left)?;
+                let right = self.evaluate(*right)?;
                 match op.ty {
                     TokTy::Minus => {
                         Ok(Literal::Num(left.as_num()? - right.as_num()?))
@@ -186,23 +232,60 @@ impl Expr {
                     },
                     TokTy::BangEqual => Ok(Literal::Bool(left != right)),
                     TokTy::EqualEqual => Ok(Literal::Bool(left == right)),
-                    _ => RloxError::new_err(ErrorType::ValueError, op.line, "", "Unreachable invalid binary operation")
+                    _ => unreachable!()
                 }
             }
         }
     }
 
-    pub fn test() -> String {
-        let tree = Expr::Binary { 
-            left: Box::new(Expr::Unary { 
-                op: Token { ty: TokTy::Minus, lexeme: "-".into(), literal: Literal::None, line: 1 }, 
-                right: Box::new(Expr::Literal(Literal::Num(123.0))) 
-            }), 
-            op: Token { ty: TokTy::Star, lexeme: "*".into(), literal: Literal::None, line: 1 }, 
-            right: Box::new(Expr::Grouping(
-                Box::new(Expr::Literal(Literal::Num(45.67)))
-            ))
-        };
-        tree.parenthesize()
+    pub fn execute(&mut self, stmt: Stmt) -> Result<(), RloxError> {
+        match stmt {
+            Stmt::Expression(e) => self.evaluate(e).map(|_| ()),
+            Stmt::Print(e) => { println!("{}", self.evaluate(e)?.to_string()); Ok(()) }
+            Stmt::Var { name, initializer } => {
+                let value = self.evaluate(initializer)?;
+                self.env.define(name, value);
+                Ok(())
+            },
+        }
+    }
+
+    pub fn interpret(&mut self, statements: Vec<Stmt>) {
+        for stmt in statements.into_iter() {
+            let result = self.execute(stmt);
+            match result {
+                Ok(_) => (),
+                Err(e) => { println!("Runtime error: {e:?}"); return }
+            }
+        }
+    }
+}
+
+pub struct Environment {
+    enclosing: Option<Box<Environment>>,
+    values: HashMap<String, Literal>
+}
+
+impl Environment {
+    pub fn new() -> Environment {
+        Environment { enclosing: None, values: HashMap::new() }
+    }
+
+    pub fn define(&mut self, name: Token, value: Literal) {
+        self.values.insert(name.lexeme, value);
+    }
+
+    pub fn assign(&mut self, name: Token, value: Literal) -> Result<(), RloxError> {
+        match self.get(&name.lexeme) {
+            Some(_) => match self.values.insert(name.lexeme, value) {
+                Some(_) => Ok(()),
+                None => RloxError::new_err(ErrorType::ValueError, name.line,  "".to_owned(), "Failed to insert variable".to_owned())
+            },
+            None => RloxError::new_err(ErrorType::ValueError, name.line, "".to_owned(), format!("Undefined variable {}", name.lexeme)),
+        }
+    }
+
+    pub fn get(&self, name: &String) -> Option<Literal> {
+        self.values.get(name).cloned()
     }
 }

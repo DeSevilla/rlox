@@ -1,5 +1,5 @@
 use std::vec::IntoIter;
-use rlox::{Token, TokTy, Expr, RloxError, Literal, ErrorType};
+use rlox::{Token, TokTy, Expr, RloxError, Literal, ErrorType, Stmt};
 use lookahead::{Lookahead, lookahead};
 
 pub struct Parser {
@@ -15,8 +15,34 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Expr, RloxError> {
-        self.expression()
+    pub fn parse(&mut self) -> Vec<Result<Stmt, RloxError>> {
+        let mut statements = Vec::new();
+        while self.lookahead(0).is_some() {
+            let new_stmt = self.declaration();
+            statements.push(new_stmt);
+        }
+        statements
+    }
+
+    fn statement(&mut self) -> Result<Stmt, RloxError> {
+        if self.match_ty([TokTy::Print].into_iter()).is_some() {
+            self.print_stmt()
+        }
+        else {
+            self.expr_stmt()
+        }
+    }
+
+    fn print_stmt(&mut self) -> Result<Stmt, RloxError> {
+        let e = self.expression()?;
+        self.consume(TokTy::Semicolon, "Expect ';' after print statement.".to_owned())?;
+        Ok(Stmt::Print(e))
+    }
+
+    fn expr_stmt(&mut self) -> Result<Stmt, RloxError> {
+        let stmt = self.expression()?;
+        self.consume(TokTy::Semicolon, "Expect ';' after expression.".to_owned())?;
+        Ok(Stmt::Expression(stmt))
     }
 
     fn error(&mut self, tok: Option<Token>, msg: String) -> RloxError {
@@ -31,10 +57,10 @@ impl Parser {
 
     fn advance(&mut self) -> Option<&Token> {
         let next = self.source.next();
-        if let Some(tok) = next {
-            self.previous = Some(tok);
+        match next {
+            Some(tok) => {  self.previous = Some(tok); self.previous.as_ref() },
+            None => None
         }
-        self.previous.as_ref()
     }
 
     fn lookahead(&mut self, n: usize) -> Option<&Token> {
@@ -45,6 +71,19 @@ impl Parser {
         match self.lookahead(0) {
             Some(tok) => tok.ty == t,
             None => false
+        }
+    }
+
+    fn consume(&mut self, t: TokTy, msg: String) -> Result<Token, RloxError> {
+        if self.check(t) {
+            match self.advance() {
+                Some(tok) => Ok(tok.clone()),
+                None => unreachable!()
+            }
+        }
+        else {
+            let tok = self.lookahead(0).cloned();
+            Err(self.error(tok, msg))
         }
     }
 
@@ -59,6 +98,7 @@ impl Parser {
 
     fn synchronize(&mut self) {
         while let Some(tok) = self.advance() {
+            println!("Synchronizing... {:?}", tok);
             if tok.ty == TokTy::Semicolon {
                 return
             }
@@ -76,7 +116,7 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Result<Expr, RloxError> {
-        self.equality()
+        self.assignment()
     }
 
     fn bin_exp<F>(&mut self, mut sub_parser: F, types: impl Clone + Iterator<Item=TokTy>) -> Result<Expr, RloxError>
@@ -87,6 +127,21 @@ impl Parser {
             expr = Expr::Binary { left: Box::new(expr), op: op.clone(), right: Box::new(right) }
         }
         Ok(expr)
+    }
+
+    fn assignment(&mut self) -> Result<Expr, RloxError> {
+        let expr = self.equality()?;
+        match self.match_ty([TokTy::Equal].into_iter()) {
+            Some(_) => {
+                let value = self.assignment()?;
+                let name = match &expr {
+                    Expr::Variable(name) => Ok(name.clone()),
+                    _ => Err(self.error(self.previous.clone(), "Tried to assign to an invalid expression (must be a variable)".to_owned())),
+                }?;
+                Ok(Expr::Assign { name, value: Box::new(value) })
+            }
+            None => Ok(expr),
+        }
     }
 
     fn equality(&mut self) -> Result<Expr, RloxError> {
@@ -116,7 +171,7 @@ impl Parser {
     }
 
     fn primary(&mut self) -> Result<Expr, RloxError> {
-        if let Some(t) = self.match_ty([TokTy::False, TokTy::True, TokTy::Nil, TokTy::Number, TokTy::String, TokTy::LeftParen].into_iter()) {
+        if let Some(t) = self.match_ty([TokTy::False, TokTy::True, TokTy::Nil, TokTy::Number, TokTy::String, TokTy::LeftParen, TokTy::Identifier].into_iter()) {
             match t.ty {
                 TokTy::False => Ok(Expr::Literal(Literal::Bool(false))),
                 TokTy::True => Ok(Expr::Literal(Literal::Bool(true))),
@@ -127,6 +182,9 @@ impl Parser {
                     self.match_ty([TokTy::RightParen].into_iter());
                     Ok(Expr::Grouping(Box::new(e)))
                 }
+                TokTy::Identifier => {
+                    Ok(Expr::Variable(t.clone()))
+                }
                 _ => {let tok = self.lookahead(0).cloned(); Err(self.error(tok, "Unreachable token type mismatch".into())) }
             }
         }
@@ -134,6 +192,30 @@ impl Parser {
             let tok = self.lookahead(0).cloned();
             Err(self.error(tok, "Expect expression".into()))
         }
+    }
+
+    fn declaration(&mut self) -> Result<Stmt, RloxError> {
+        let result = self.match_ty([TokTy::Var].into_iter());
+        let result = match result {
+            Some(_) => self.var_declaration(),
+            None => self.statement(),
+        };
+        match result {
+            Ok(s) => Ok(s),
+            Err(e) => { self.synchronize(); Err(e)},
+        }
+    }
+
+    fn var_declaration(&mut self) -> Result<Stmt, RloxError> {
+        let name = self.consume(TokTy::Identifier, "Expect variable name".to_owned())?;
+        let initializer = if self.match_ty([TokTy::Equal].into_iter()).is_some() {
+            self.expression()?
+        }
+        else {
+            Expr::Literal(Literal::None)
+        };
+        self.consume(TokTy::Semicolon, "Expect ';' after variable declaraton".to_owned())?;
+        Ok(Stmt::Var { name, initializer })
     }
 
 }
