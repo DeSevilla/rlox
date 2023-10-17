@@ -25,18 +25,101 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Stmt, RloxError> {
-        if self.match_ty([TokTy::Print].into_iter()).is_some() {
+        if self.match_ty([TokTy::For].into_iter()).is_some() {
+            self.for_stmt()
+        }
+        else if self.match_ty([TokTy::If].into_iter()).is_some() {
+            self.if_stmt()
+        }
+        else if self.match_ty([TokTy::Print].into_iter()).is_some() {
             self.print_stmt()
+        }
+        else if self.match_ty([TokTy::While].into_iter()).is_some() {
+            self.while_stmt()
+        }
+        else if self.match_ty([TokTy::LeftBrace].into_iter()).is_some() {
+            self.block()
         }
         else {
             self.expr_stmt()
         }
     }
 
+    fn for_stmt(&mut self) -> Result<Stmt, RloxError> {
+        self.consume(TokTy::LeftParen, "Expect '(' after 'for'".to_owned())?;
+        let initializer = if self.match_ty([TokTy::Semicolon].into_iter()).is_some() {
+            None
+        }
+        else if self.match_ty([TokTy::Var].into_iter()).is_some() {
+            Some(self.var_declaration()?)
+        }
+        else {
+            Some(self.expr_stmt()?)
+        };
+        let condition = if !self.check(TokTy::Semicolon) {
+            Some(self.expression()?)
+        }
+        else {
+            None
+        };
+        self.consume(TokTy::Semicolon, "Expect ';' after loop condition".to_owned())?;
+        let increment = if !self.check(TokTy::RightParen) {
+            Some(self.expression()?)
+        }
+        else {
+            None
+        };
+        self.consume(TokTy::RightParen, "Expect ')' after for clauses".to_owned())?;
+        let mut body = self.statement()?;
+        match increment {
+            Some(inc) => body = Stmt::Block(vec![body, inc.into()]),
+            None => ()
+        }
+        let cond = condition.unwrap_or(Literal::Bool(true).into());
+        body = Stmt::While { cond: cond, body: Box::new(body) };
+        match initializer {
+            Some(init) => body = Stmt::Block(vec![init.into(), body]),
+            None => ()
+        }
+        Ok(body)
+    }
+
+    fn if_stmt(&mut self) -> Result<Stmt, RloxError> {
+        self.consume(TokTy::LeftParen, "Expect '(' after if".to_owned())?;
+        let cond = self.expression()?;
+        self.consume(TokTy::RightParen, "Expect ')' after condition".to_owned())?;
+        let then_br = Box::new(self.statement()?);
+        let else_br = Box::new(
+            if self.match_ty([TokTy::Else].into_iter()).is_some() {
+                self.statement()?
+            } else {
+                Stmt::Expression(Expr::Literal(Literal::None))
+            }
+        );
+        Ok(Stmt::If { cond, then_br, else_br })
+    }
+
     fn print_stmt(&mut self) -> Result<Stmt, RloxError> {
         let e = self.expression()?;
         self.consume(TokTy::Semicolon, "Expect ';' after print statement.".to_owned())?;
         Ok(Stmt::Print(e))
+    }
+
+    fn while_stmt(&mut self) -> Result<Stmt, RloxError> {
+        self.consume(TokTy::LeftParen, "Expect '(' after while".to_owned())?;
+        let cond = self.expression()?;
+        self.consume(TokTy::RightParen, "Expect ')' after while condition".to_owned())?;
+        let body = Box::new(self.statement()?);
+        Ok(Stmt::While { cond, body })
+    }
+
+    fn block(&mut self) -> Result<Stmt, RloxError> {
+        let mut stmts = Vec::new();
+        while !(self.check(TokTy::RightBrace)) && self.lookahead(0).is_some() {
+            stmts.push(self.declaration()?)
+        }
+        self.consume(TokTy::RightBrace, "Block must terminate with a '}'".to_owned())?;
+        Ok(Stmt::Block(stmts))
     }
 
     fn expr_stmt(&mut self) -> Result<Stmt, RloxError> {
@@ -129,8 +212,18 @@ impl Parser {
         Ok(expr)
     }
 
+    fn logical_exp<F>(&mut self, mut sub_parser: F, types: impl Clone + Iterator<Item=TokTy>) -> Result<Expr, RloxError>
+            where F: FnMut(&mut Self) -> Result<Expr, RloxError> {
+        let mut expr = sub_parser(self)?;
+        while let Some(op) = self.match_ty(types.clone()).cloned() {
+            let right = sub_parser(self)?;
+            expr = Expr::Logical { left: Box::new(expr), op: op.clone(), right: Box::new(right) }
+        }
+        Ok(expr)
+    }
+
     fn assignment(&mut self) -> Result<Expr, RloxError> {
-        let expr = self.equality()?;
+        let expr = self.or()?;
         match self.match_ty([TokTy::Equal].into_iter()) {
             Some(_) => {
                 let value = self.assignment()?;
@@ -142,6 +235,14 @@ impl Parser {
             }
             None => Ok(expr),
         }
+    }
+
+    fn or(&mut self) -> Result<Expr, RloxError> {
+        self.logical_exp(|s| s.and(), [TokTy::Or].into_iter())
+    }
+
+    fn and(&mut self) -> Result<Expr, RloxError> {
+        self.logical_exp(|s| s.equality(), [TokTy::And].into_iter())
     }
 
     fn equality(&mut self) -> Result<Expr, RloxError> {
@@ -166,8 +267,33 @@ impl Parser {
             Ok(Expr::Unary { op, right: Box::new(right) })
         }
         else {
-            self.primary()
+            self.call()
         }
+    }
+
+    fn call(&mut self) -> Result<Expr, RloxError> {
+        let mut expr = self.primary()?;
+        loop {
+            if self.match_ty([TokTy::LeftParen].into_iter()).is_some() {
+                expr = self.finish_call(expr)?;
+            }
+            else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Expr) -> Result<Expr, RloxError> {
+        let mut args = Vec::new();
+        if !self.check(TokTy::RightParen) {
+            args.push(self.expression()?);
+            while self.match_ty([TokTy::Comma].into_iter()).is_some() {
+                args.push(self.expression()?);
+            }
+        }
+        let paren = self.consume(TokTy::RightParen, "Expect ')' after arguments".to_owned())?;
+        Ok(Expr::Call { callee: Box::new(callee), args, loc: paren.line })
     }
 
     fn primary(&mut self) -> Result<Expr, RloxError> {

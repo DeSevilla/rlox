@@ -2,13 +2,14 @@ use std::env;
 use std::fs;
 use std::io;
 use rlox::Stmt;
-use rlox::{Token, RloxError, Interpreter};
+use rlox::{Token, RloxError};
 use itertools::Itertools;
 pub mod scanner;
 pub mod parser;
+pub mod interpreter;
 
 struct RloxRepl {
-    interpreter: Interpreter,
+    interpreter: interpreter::Interpreter,
 }
 
 impl RloxRepl {
@@ -34,23 +35,44 @@ impl RloxRepl {
         for line in stdin.lines() {
             // print!("> ");
             match line {
-                Ok(text) => if text == "quit" { break } else if text.len() > 0 { self.run(text) } else { break },
+                Ok(text) => if text == "quit" { break } else if text.len() > 0 { self.run(text) } else { continue },
                 Err(e) => { println!("{e}"); break }
             }
             // print!("> ")
         }
     }
 
-    fn run_file(&mut self, name: &str) {
-        let contents = fs::read_to_string(name).expect("Could not read file");
-        self.run(contents);
+    fn run_file(&mut self, path: &str) {
+        let append_test = |p| "./test/".to_owned() + p;
+        println!("{}", append_test(path));
+        let one_file = fs::read_to_string(path)
+            .or_else(|_| fs::read_to_string(append_test(path)));
+        if one_file.is_ok() {
+            return self.run(one_file.unwrap());
+        }
+        else {
+            println!("Could not read an individual file {one_file:?}");
+        }
+        let many_files = fs::read_dir(path)
+            .or_else(|_| fs::read_dir(append_test(path)));
+        match many_files {
+            Ok(filenames) => for file in filenames {
+                let contents = match file {
+                    Ok(entry) => { println!("{:?}", entry.path()); fs::read_to_string(entry.path()) },
+                    Err(e) => { println!("Failed to open file; {e}"); continue; }
+                };
+                self.interpreter.clear_env();
+                self.run(contents.expect("Could not read from file"));
+            },
+            Err(e) => println!("Could not read any matching files {e:?}")
+        }
     }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut repl = RloxRepl {
-        interpreter: Interpreter::new()
+        interpreter: interpreter::Interpreter::new()
     };
     if args.len() > 2 {
         println!("Usage: rlox [script]");
