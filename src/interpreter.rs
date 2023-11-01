@@ -1,6 +1,5 @@
-use std::{collections::HashMap, cell::RefCell, rc::Rc};
-use std::time::{SystemTime, UNIX_EPOCH};
-use rlox::{Token, TokTy, Literal, Expr, Stmt, RloxError, ErrorType, NativeFunction};
+use std::{cell::RefCell, rc::Rc, collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
+use rlox::{Token, TokTy, Literal, Expr, Stmt, RloxError, ErrorType, NativeFunction, Environment};
 
 pub struct Interpreter {
     env: Rc<RefCell<Environment>>,
@@ -10,7 +9,7 @@ pub struct Interpreter {
 impl Interpreter {
     pub fn new() -> Interpreter {
         let mut global = Environment::new();
-        global.define("clock", Literal::NatFunc { arity: 0, name: NativeFunction::Time });
+        global.define("clock", Literal::NatFunc { params: Vec::new(), name: NativeFunction::Time });
         let global = global.as_rc();
         let env = Rc::clone(&global);
         Interpreter {
@@ -20,10 +19,23 @@ impl Interpreter {
     }
 
     pub fn clear_env(&mut self) {
-        self.env.replace(Environment::new());
+        self.global.replace(Environment::new());
+        self.env = Rc::clone(&self.global);
     }
 
-    pub fn call(&mut self, func: Literal, args: Vec<Literal>) -> Result<Literal, RloxError> {
+    pub fn add_env(&mut self) {
+        self.env = Rc::new(RefCell::new(Environment { enclosing: Some(Rc::clone(&self.env)), values: HashMap::new() }))
+    }
+
+    pub fn pop_env(&mut self) {
+        let outer = self.env.borrow().enclosing.clone();
+        match outer {
+            Some(e) => { self.env = e },
+            None => ()
+        }
+    }
+
+    pub fn call(&mut self, func: &Literal, args: Vec<Literal>) -> Result<Literal, RloxError> {
         match func {
             Literal::NatFunc { name, .. } => {
                 match name {
@@ -33,9 +45,27 @@ impl Interpreter {
                     }
                 }
             }
+            Literal::Function { params, body, env } => {
+                let old_env = Rc::clone(&self.env);
+                self.env = Rc::clone(env);
+                self.add_env();
+                for (name, arg) in params.into_iter().zip(args.into_iter()) {
+                    self.env.borrow_mut().define(&name.lexeme, arg.clone());
+                }
+                let result = self.execute(&body);
+                self.env = old_env;
+                match result {
+                    Ok(()) => Ok(Literal::None.into()),
+                    Err(e) => match e.ty {
+                        ErrorType::Return(res) => Ok(res),
+                        _ => Err(e)
+                    }
+                } 
+            }
             _ => RloxError::new_err(ErrorType::TypeError, 0, "", format!("Cannot call {func:?} as function")),
         }
     }
+
     pub fn evaluate(&mut self, expr: &Expr) -> Result<Literal, RloxError> {
         match expr {
             Expr::Literal(lit) => Ok(lit.clone()),
@@ -108,10 +138,11 @@ impl Interpreter {
                 //     return ;
                 // }
                 match func {
-                    Literal::Function { arity, .. } | Literal::NatFunc { arity, .. } => if arity == args.len() {
-                        self.call(func, args)
+                    Literal::Function { ref params, .. } | Literal::NatFunc { ref params, .. } => if params.len() == args.len() {
+                        self.call(&func, args)
                     } else {
-                        RloxError::new_err(ErrorType::ArityError, *loc, "", format!("Function requires {} args but was given {}", arity, args.len()))
+                        RloxError::new_err(ErrorType::ArityError, *loc, "", 
+                            format!("Function requires {} args but was given {}", params.len(), args.len()))
                     },
                     _ => RloxError::new_err(ErrorType::ValueError, *loc, "", "Tried to call a non-function")
                 }
@@ -129,17 +160,19 @@ impl Interpreter {
                 Ok(())
             },
             Stmt::Block(stmts) => {
-                self.env = Environment::wrapped_new(Rc::clone(&self.env));
+                self.add_env();
                 for st in stmts {
                     let res = self.execute(st);
                     if res.is_err() {
-                        let outer = self.env.borrow().enclosing.clone().expect("Block scope failed to preserve outer environment");
-                        self.env = outer;
+                        self.pop_env();
+                        // let outer = self.env.borrow().enclosing.clone().expect("Block scope failed to preserve outer environment");
+                        // self.env = outer;
                         return res;
                     }
                 }
-                let outer = self.env.borrow().enclosing.clone().expect("Block scope failed to preserve outer environment");
-                self.env = outer;
+                // let outer = self.env.borrow().enclosing.clone().expect("Block scope failed to preserve outer environment");
+                // self.env = outer;
+                self.pop_env();
                 Ok(())
             },
             Stmt::If { cond, then_br, else_br } => {
@@ -155,6 +188,16 @@ impl Interpreter {
                     self.execute(body)?;
                 }
                 Ok(())
+            },
+            Stmt::Fun { name, params, body } => {
+                self.env.borrow_mut().define(&name.lexeme,
+                    Literal::Function { params: params.clone(), body: body.clone(), env: Rc::clone(&self.env) }
+                );
+                Ok(())
+            },
+            Stmt::Return { value, .. } => {
+                let result = self.evaluate(value)?;
+                RloxError::new_err(ErrorType::Return(result), 0, "", "")
             }
         }
     }
@@ -166,83 +209,6 @@ impl Interpreter {
                 Ok(_) => (),
                 Err(e) => { println!("Runtime error: {e:?}"); return }
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Environment {
-    enclosing: Option<Rc<RefCell<Environment>>>,
-    values: HashMap<String, Literal>
-}
-
-
-impl Environment {
-    pub fn new() -> Environment {
-        Environment { enclosing: None, values: HashMap::new() }
-    }
-
-    pub fn as_rc(self) -> Rc<RefCell<Environment>> {
-        Rc::new(RefCell::new(self))
-    }
-
-    pub fn add_new(self) -> Environment {
-        Environment { enclosing: Some(Rc::new(RefCell::new(self))), values: HashMap::new() }
-    }
-
-    pub fn wrapped_new(env: Rc<RefCell<Environment>>) -> Rc<RefCell<Environment>> {
-        Rc::new(RefCell::new(Environment { enclosing: Some(env), values: HashMap::new() }))
-    }
-
-    // pub fn wrapped_pop(env: &Rc<RefCell<Environment>>) -> Option<Rc<RefCell<Environment>>> {
-    //     match &env.borrow().enclosing {
-    //         Some(e) => Some(Rc::clone(e)),
-    //         None => None
-    //     }
-    // }
-
-    // fn pop(self) -> Rc<RefCell<Environment>> {
-    //     self.enclosing.expect("Can only call pop on an RC with an enclosing environment")
-    // }
-
-    // pub fn globals(&mut self) -> &mut Environment {
-    //     // if self.enclosing.is_some() {
-    //     //     self.enclosing.unwrap().globals()
-    //     // }
-    //     // else {
-    //     //     &self
-    //     // }
-    //     match self.enclosing {
-    //         Some(mut e) => e.borrow_mut().globals(),
-    //         None => self
-    //     }
-    // }
-
-    pub fn define(&mut self, name: &str, value: Literal) {
-        self.values.insert(name.to_owned(), value);
-    }
-
-    pub fn assign(&mut self, name: &Token, value: Literal) -> Result<(), RloxError> {
-        match self.values.get(&name.lexeme) {
-            Some(_) => match self.values.insert(name.lexeme.clone(), value) {
-                Some(_) => Ok(()),
-                None => RloxError::new_err(ErrorType::ValueError, name.line,  "", "Failed to insert variable")
-            },
-            None => match &self.enclosing {
-                Some(e) => e.borrow_mut().assign(name, value),
-                None => RloxError::new_err(ErrorType::ValueError, name.line, "", format!("Undefined variable {}", name.lexeme))
-            },
-        }
-    }
-
-    pub fn get(&self, name: &String) -> Option<Literal> {
-        let result = self.values.get(name);
-        // let enclosing = self.enclosing
-        if result.is_some() {
-            return result.cloned();
-        }
-        else {
-            return self.enclosing.as_ref()?.borrow().get(name);
         }
     }
 }

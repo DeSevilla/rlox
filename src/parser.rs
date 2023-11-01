@@ -34,6 +34,9 @@ impl Parser {
         else if self.match_ty([TokTy::Print].into_iter()).is_some() {
             self.print_stmt()
         }
+        else if self.match_ty([TokTy::Return].into_iter()).is_some() {
+            self.return_stmt()
+        }
         else if self.match_ty([TokTy::While].into_iter()).is_some() {
             self.while_stmt()
         }
@@ -45,8 +48,20 @@ impl Parser {
         }
     }
 
+    fn return_stmt(&mut self) -> Result<Stmt, RloxError> {
+        let keyword = self.previous.clone().expect("Should be impossible to call return_stmt without a previous token");
+        let value = if !self.check(TokTy::Semicolon) {
+            self.expression()?
+        }
+        else {
+            Literal::None.into()
+        };
+        self.consume(TokTy::Semicolon, "Expect ';' after return statement")?;
+        Ok(Stmt::Return { keyword, value })
+    }
+
     fn for_stmt(&mut self) -> Result<Stmt, RloxError> {
-        self.consume(TokTy::LeftParen, "Expect '(' after 'for'".to_owned())?;
+        self.consume(TokTy::LeftParen, "Expect '(' after 'for'")?;
         let initializer = if self.match_ty([TokTy::Semicolon].into_iter()).is_some() {
             None
         }
@@ -62,14 +77,14 @@ impl Parser {
         else {
             None
         };
-        self.consume(TokTy::Semicolon, "Expect ';' after loop condition".to_owned())?;
+        self.consume(TokTy::Semicolon, "Expect ';' after loop condition")?;
         let increment = if !self.check(TokTy::RightParen) {
             Some(self.expression()?)
         }
         else {
             None
         };
-        self.consume(TokTy::RightParen, "Expect ')' after for clauses".to_owned())?;
+        self.consume(TokTy::RightParen, "Expect ')' after for clauses")?;
         let mut body = self.statement()?;
         match increment {
             Some(inc) => body = Stmt::Block(vec![body, inc.into()]),
@@ -85,9 +100,9 @@ impl Parser {
     }
 
     fn if_stmt(&mut self) -> Result<Stmt, RloxError> {
-        self.consume(TokTy::LeftParen, "Expect '(' after if".to_owned())?;
+        self.consume(TokTy::LeftParen, "Expect '(' after if")?;
         let cond = self.expression()?;
-        self.consume(TokTy::RightParen, "Expect ')' after condition".to_owned())?;
+        self.consume(TokTy::RightParen, "Expect ')' after condition")?;
         let then_br = Box::new(self.statement()?);
         let else_br = Box::new(
             if self.match_ty([TokTy::Else].into_iter()).is_some() {
@@ -101,14 +116,14 @@ impl Parser {
 
     fn print_stmt(&mut self) -> Result<Stmt, RloxError> {
         let e = self.expression()?;
-        self.consume(TokTy::Semicolon, "Expect ';' after print statement.".to_owned())?;
+        self.consume(TokTy::Semicolon, "Expect ';' after print statement.")?;
         Ok(Stmt::Print(e))
     }
 
     fn while_stmt(&mut self) -> Result<Stmt, RloxError> {
-        self.consume(TokTy::LeftParen, "Expect '(' after while".to_owned())?;
+        self.consume(TokTy::LeftParen, "Expect '(' after while")?;
         let cond = self.expression()?;
-        self.consume(TokTy::RightParen, "Expect ')' after while condition".to_owned())?;
+        self.consume(TokTy::RightParen, "Expect ')' after while condition")?;
         let body = Box::new(self.statement()?);
         Ok(Stmt::While { cond, body })
     }
@@ -118,23 +133,23 @@ impl Parser {
         while !(self.check(TokTy::RightBrace)) && self.lookahead(0).is_some() {
             stmts.push(self.declaration()?)
         }
-        self.consume(TokTy::RightBrace, "Block must terminate with a '}'".to_owned())?;
+        self.consume(TokTy::RightBrace, "Block must terminate with a '}'")?;
         Ok(Stmt::Block(stmts))
     }
 
     fn expr_stmt(&mut self) -> Result<Stmt, RloxError> {
         let stmt = self.expression()?;
-        self.consume(TokTy::Semicolon, "Expect ';' after expression.".to_owned())?;
+        self.consume(TokTy::Semicolon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression(stmt))
     }
 
-    fn error(&mut self, tok: Option<Token>, msg: String) -> RloxError {
+    fn error(&mut self, tok: Option<Token>, msg: &str) -> RloxError {
         let line = tok.map(|t| t.line).unwrap_or(0);
         return RloxError {
             ty: ErrorType::ParseError,
             line,
             info: "parser".into(),
-            msg
+            msg: msg.to_owned()
         }
     }
 
@@ -157,7 +172,7 @@ impl Parser {
         }
     }
 
-    fn consume(&mut self, t: TokTy, msg: String) -> Result<Token, RloxError> {
+    fn consume(&mut self, t: TokTy, msg: &str) -> Result<Token, RloxError> {
         if self.check(t) {
             match self.advance() {
                 Some(tok) => Ok(tok.clone()),
@@ -229,7 +244,7 @@ impl Parser {
                 let value = self.assignment()?;
                 let name = match &expr {
                     Expr::Variable(name) => Ok(name.clone()),
-                    _ => Err(self.error(self.previous.clone(), "Tried to assign to an invalid expression (must be a variable)".to_owned())),
+                    _ => Err(self.error(self.previous.clone(), "Tried to assign to an invalid expression (must be a variable)")),
                 }?;
                 Ok(Expr::Assign { name, value: Box::new(value) })
             }
@@ -292,7 +307,7 @@ impl Parser {
                 args.push(self.expression()?);
             }
         }
-        let paren = self.consume(TokTy::RightParen, "Expect ')' after arguments".to_owned())?;
+        let paren = self.consume(TokTy::RightParen, "Expect ')' after arguments")?;
         Ok(Expr::Call { callee: Box::new(callee), args, loc: paren.line })
     }
 
@@ -321,10 +336,14 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Stmt, RloxError> {
-        let result = self.match_ty([TokTy::Var].into_iter());
-        let result = match result {
-            Some(_) => self.var_declaration(),
-            None => self.statement(),
+        let result = if self.match_ty([TokTy::Fun].into_iter()).is_some() {
+            self.function("function")
+        }
+        else if self.match_ty([TokTy::Var].into_iter()).is_some() {
+            self.var_declaration()
+        }
+        else {
+            self.statement()
         };
         match result {
             Ok(s) => Ok(s),
@@ -332,15 +351,31 @@ impl Parser {
         }
     }
 
+    fn function(&mut self, kind: &str) -> Result<Stmt, RloxError> {
+        let name = self.consume(TokTy::Identifier, &format!("Expect {kind} name."))?;
+        self.consume(TokTy::LeftParen, &format!("Expect '(' after {kind} name"))?;
+        let mut params = Vec::new();
+        if !self.check(TokTy::RightParen) {
+            params.push(self.consume(TokTy::Identifier, "Expect parameter name")?);
+            while self.match_ty([TokTy::Comma].into_iter()).is_some() {
+                params.push(self.consume(TokTy::Identifier, "Expect parameter name")?);
+            }
+        }
+        self.consume(TokTy::RightParen, "Expect ')' after parameters")?;
+        self.consume(TokTy::LeftBrace, &format!("Expect '{{' before {kind} body"))?;
+        let body = self.block()?;
+        Ok(Stmt::Fun { name, params, body: Box::new(body) })
+    }
+
     fn var_declaration(&mut self) -> Result<Stmt, RloxError> {
-        let name = self.consume(TokTy::Identifier, "Expect variable name".to_owned())?;
+        let name = self.consume(TokTy::Identifier, "Expect variable name")?;
         let initializer = if self.match_ty([TokTy::Equal].into_iter()).is_some() {
             self.expression()?
         }
         else {
             Expr::Literal(Literal::None)
         };
-        self.consume(TokTy::Semicolon, "Expect ';' after variable declaraton".to_owned())?;
+        self.consume(TokTy::Semicolon, "Expect ';' after variable declaraton")?;
         Ok(Stmt::Var { name, initializer })
     }
 

@@ -1,15 +1,16 @@
-use std::fmt;
+use std::{fmt, collections::HashMap, cell::RefCell, rc::Rc};
 
-#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ErrorType {
     InvalidChar,
     ParseError,
     TypeError,
     ValueError,
     ArityError,
+    Return(Literal)
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
+#[derive(Debug, Clone)]
 pub struct RloxError {
     pub ty: ErrorType,
     pub line: usize, 
@@ -59,8 +60,8 @@ pub enum Literal {
     Num(f64),
     Str(String),
     Bool(bool),
-    Function { arity: usize, body: Vec<Stmt> },
-    NatFunc { arity: usize, name: NativeFunction },
+    Function { params: Vec<Token>, body: Box<Stmt>, env: Rc<RefCell<Environment>> },
+    NatFunc { params: Vec<Token>, name: NativeFunction },
     None
 }
 
@@ -225,6 +226,8 @@ pub enum Stmt {
     Block(Vec<Stmt>),
     If { cond: Expr, then_br: Box<Stmt>, else_br: Box<Stmt> },
     While { cond: Expr, body: Box<Stmt> },
+    Fun { name: Token, params: Vec<Token>, body: Box<Stmt> },
+    Return { keyword: Token, value: Expr },
 }
 
 // impl From<Expr> for Stmt {
@@ -236,5 +239,50 @@ pub enum Stmt {
 impl<T> From<T> for Stmt where T: Into<Expr> {
     fn from(value: T) -> Self {
         Self::Expression(value.into())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Environment {
+    pub enclosing: Option<Rc<RefCell<Environment>>>,
+    pub values: HashMap<String, Literal>
+}
+
+
+impl Environment {
+    pub fn new() -> Environment {
+        Environment { enclosing: None, values: HashMap::new() }
+    }
+
+    pub fn as_rc(self) -> Rc<RefCell<Environment>> {
+        Rc::new(RefCell::new(self))
+    }
+
+    pub fn define(&mut self, name: &str, value: Literal) {
+        self.values.insert(name.to_owned(), value);
+    }
+
+    pub fn assign(&mut self, name: &Token, value: Literal) -> Result<(), RloxError> {
+        match self.values.get(&name.lexeme) {
+            Some(_) => match self.values.insert(name.lexeme.clone(), value) {
+                Some(_) => Ok(()),
+                None => RloxError::new_err(ErrorType::ValueError, name.line,  "", "Failed to insert variable")
+            },
+            None => match &self.enclosing {
+                Some(e) => e.borrow_mut().assign(name, value),
+                None => RloxError::new_err(ErrorType::ValueError, name.line, "", format!("Undefined variable {}", name.lexeme))
+            },
+        }
+    }
+
+    pub fn get(&self, name: &String) -> Option<Literal> {
+        let result = self.values.get(name);
+        // let enclosing = self.enclosing
+        if result.is_some() {
+            return result.cloned();
+        }
+        else {
+            return self.enclosing.as_ref()?.borrow().get(name);
+        }
     }
 }
