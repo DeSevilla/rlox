@@ -35,6 +35,10 @@ impl Interpreter {
         }
     }
 
+    pub fn resolve(&mut self, expr: &Expr, depth: usize) -> Result<(), RloxError> {
+        unimplemented!()
+    }
+
     pub fn call(&mut self, func: &Literal, args: Vec<Literal>) -> Result<Literal, RloxError> {
         match func {
             Literal::NatFunc { name, .. } => {

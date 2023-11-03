@@ -7,6 +7,7 @@ use itertools::Itertools;
 pub mod scanner;
 pub mod parser;
 pub mod interpreter;
+pub mod resolver;
 
 struct RloxRepl {
     interpreter: interpreter::Interpreter,

@@ -7,6 +7,7 @@ pub enum ErrorType {
     TypeError,
     ValueError,
     ArityError,
+    NameError,
     Return(Literal)
 }
 
