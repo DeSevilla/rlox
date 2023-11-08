@@ -4,6 +4,7 @@ use rlox::{Token, TokTy, Literal, Expr, Stmt, RloxError, ErrorType, NativeFuncti
 pub struct Interpreter {
     env: Rc<RefCell<Environment>>,
     global: Rc<RefCell<Environment>>,
+    locals: HashMap<Expr, usize>,
 }
 
 impl Interpreter {
@@ -15,6 +16,7 @@ impl Interpreter {
         Interpreter {
             env,
             global,
+            locals: HashMap::new(),
         }
     }
 
@@ -37,6 +39,8 @@ impl Interpreter {
 
     pub fn resolve(&mut self, expr: &Expr, depth: usize) -> Result<(), RloxError> {
         unimplemented!()
+        // self.locals.insert(&expr, depth);
+        // Ok(())
     }
 
     pub fn call(&mut self, func: &Literal, args: Vec<Literal>) -> Result<Literal, RloxError> {
