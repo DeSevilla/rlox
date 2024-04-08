@@ -38,6 +38,7 @@ impl Interpreter {
     }
 
     pub fn resolve(&mut self, var: &Variable, depth: usize) {
+        // println!("Interpreter resolving {var:?} at depth {depth}");
         self.locals.insert(var.clone(), depth);
         // match expr {
         //     Expr::Variable(var) => {
@@ -93,11 +94,24 @@ impl Interpreter {
                     Some(d) => self.env.borrow_mut().get_at(*d, &var.name),
                     None => self.global.borrow_mut().get(&var.name),
                 };
+                // match &val {
+                //     Some(Literal::Function { .. }) => println!(" is a function"),
+                //     _ => println!(" with value {:?}", &val),
+                // }
                 val.ok_or(RloxError { ty: ErrorType::NameError, line: var.loc, info: "".into(), msg: format!("Variable not found: {}", var.name) })
             }
             Expr::Assign { var, value } => {
+                // print!("Executing assign to {var:?}");
                 let val = self.evaluate(value)?;
-                self.env.borrow_mut().assign(var, val.clone())?;
+                // match &val {
+                //     Literal::Function { .. } => println!(" with a function"),
+                //     _ => println!(" with value {:?}", &val),
+                // }
+                let distance = self.locals.get(&var);
+                match distance {
+                    Some(d) => self.env.borrow_mut().assign_at(*d, var, val.clone())?,
+                    None => self.global.borrow_mut().assign(var, val.clone())?,
+                };
                 Ok(val)
             }
             Expr::Unary { op, right } => {

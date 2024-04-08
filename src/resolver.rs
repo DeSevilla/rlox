@@ -23,19 +23,23 @@ impl Resolver {
         match stmt {
             Stmt::Block(stmts) => {
                 self.begin_scope();
+                // println!("Began block scope");
                 for st in stmts { 
                     self.resolve(st)?;
                 }
                 self.end_scope();
+                // println!("Ended block scope");
                 Ok(())
             },
             Stmt::Var { name, initializer } => {
+                // println!("Resolving Var {} at line {}", name.lexeme, name.line);
                 self.declare(name);
                 self.resolve_expr(initializer)?;
                 self.define(name);
                 Ok(())
             },
             Stmt::Fun { name, params, body } => {
+                // println!("Resolving function {} at line {}", name.lexeme, name.line);
                 self.declare(name);
                 self.define(name);
                 self.begin_scope();
@@ -71,6 +75,7 @@ impl Resolver {
     pub fn resolve_expr(&mut self, expr: &Expr) -> Result<(), RloxError> {
         match expr {
             Expr::Variable(v) => {
+                // println!("Resolving variable {v:?}");
                 if let Some(scope) = self.scopes.last_mut() {
                     if let Some(false) = scope.get(&v.name) {
                         return RloxError::new_err(rlox::ErrorType::NameError, v.loc, "", "Can't read local variable in its own initializer");
@@ -79,6 +84,7 @@ impl Resolver {
                 self.resolve_local(v)
             },
             Expr::Assign { var, value } => {
+                // println!("Resolving assign to {var:?} of value {value:?}");
                 self.resolve_expr(value)?;
                 self.resolve_local(var)
             },
@@ -110,9 +116,11 @@ impl Resolver {
     pub fn resolve_local(&mut self, var: &Variable) -> Result<(), RloxError> {
         for (i, scope) in self.scopes.iter().rev().enumerate() {
             if scope.contains_key(&var.name) {
-                self.interpreter.resolve(var, i)
+                self.interpreter.resolve(var, i);
+                return Ok(())
             }
         }
+        // println!("Resolver says global {var:?}");
         Ok(())
     }
 

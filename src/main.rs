@@ -68,7 +68,7 @@ impl RloxRepl {
             return self.run(one_file.unwrap());
         }
         else {
-            println!("Could not read an individual file {one_file:?}");
+            println!("Could not read an individual file: {one_file:?}");
         }
         let many_files = fs::read_dir(path)
             .or_else(|_| fs::read_dir(append_test(path)));
