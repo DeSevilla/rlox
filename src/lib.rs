@@ -8,6 +8,7 @@ pub enum ErrorType {
     ValueError,
     ArityError,
     NameError,
+    BadReturn,
     Return(Literal)
 }
 
@@ -53,6 +54,12 @@ pub enum TokTy {
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum NativeFunction {
     Time
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum FunctionType {
+    None,
+    Function,
 }
 
 

@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use crate::interpreter::Interpreter;
-use rlox::{Expr, RloxError, Stmt, Token, Variable};
+use rlox::{Expr, FunctionType, RloxError, Stmt, Token, Variable};
 
 pub struct Resolver {
     scopes: Vec<HashMap<String, bool>>,
     pub interpreter: Interpreter,
+    current_function: FunctionType
 }
 
 impl Resolver {
     pub fn new(interpreter: Interpreter) -> Resolver {
-        Resolver { scopes: Vec::new(), interpreter }
+        Resolver { scopes: Vec::new(), interpreter, current_function: FunctionType::None }
     }
     
     pub fn resolve_many(&mut self, stmts: &Vec<Stmt>) -> Result<(), RloxError> {
@@ -33,22 +34,25 @@ impl Resolver {
             },
             Stmt::Var { name, initializer } => {
                 // println!("Resolving Var {} at line {}", name.lexeme, name.line);
-                self.declare(name);
+                self.declare(name)?;
                 self.resolve_expr(initializer)?;
                 self.define(name);
                 Ok(())
             },
             Stmt::Fun { name, params, body } => {
                 // println!("Resolving function {} at line {}", name.lexeme, name.line);
-                self.declare(name);
+                let enclosing_function = self.current_function;
+                self.current_function = FunctionType::Function;
+                self.declare(name)?;
                 self.define(name);
                 self.begin_scope();
                 for param in params {
-                    self.declare(param);
+                    self.declare(param)?;
                     self.define(param);
                 }
                 self.resolve(body)?;
                 self.end_scope();
+                self.current_function = enclosing_function;
                 Ok(())
             },
             Stmt::Expression(expr) => {
@@ -62,7 +66,10 @@ impl Resolver {
             Stmt::Print(expr) => {
                 self.resolve_expr(expr)
             },
-            Stmt::Return { value, .. } => {
+            Stmt::Return { value, keyword } => {
+                if self.current_function == FunctionType::None {
+                    return RloxError::new_err(rlox::ErrorType::BadReturn, keyword.line, "", "Return statement can only exist inside function")
+                }
                 self.resolve_expr(value)
             },
             Stmt::While { cond, body } => {
@@ -132,10 +139,14 @@ impl Resolver {
         self.scopes.pop();
     }
 
-    pub fn declare(&mut self, name: &Token) {
+    pub fn declare(&mut self, name: &Token) -> Result<(), RloxError> {
         if let Some(scope) = self.scopes.last_mut() {
+            if scope.contains_key(&name.lexeme) {
+                return RloxError::new_err(rlox::ErrorType::NameError, name.line, "", "Variable with this name already exists");
+            }
             scope.insert(name.lexeme.clone(), false);
         }
+        Ok(())
     }
 
     pub fn define(&mut self, name: &Token) {
