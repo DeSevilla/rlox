@@ -1,4 +1,4 @@
-use std::{fmt, collections::HashMap, cell::RefCell, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, fmt, rc::Rc};
 
 #[derive(Debug, Clone)]
 pub enum ErrorType {
@@ -161,15 +161,21 @@ impl fmt::Display for Token {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Variable {
+    pub name: String,
+    pub loc: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
-    Assign { name: Token, value: Box<Expr> },
+    Assign { var: Variable, value: Box<Expr> },
     Binary { left: Box<Expr>, op: Token, right: Box<Expr> },
     Logical { left: Box<Expr>, op: Token, right: Box<Expr> },
     Unary { op: Token, right: Box<Expr> },
     Grouping(Box<Expr>),
     Literal(Literal),
-    Variable(Token),
+    Variable(Variable),
     Call { callee: Box<Expr>, args: Vec<Expr>, loc: usize },
 }
 
@@ -188,8 +194,8 @@ impl Expr {
                 Literal::None => "nil".to_owned(),
                 _ => "TODO not representable".to_owned(),
             },
-            Expr::Variable(v) => output + "var " + &v.lexeme + ")",
-            Expr::Assign { name, value } => output + &name.lexeme + " = " + &value.parenthesize() + ")",
+            Expr::Variable(v) => output + "var " + &v.name + ")",
+            Expr::Assign { var, value } => output + &var.name + " = " + &value.parenthesize() + ")",
             Expr::Call { callee, args, loc: _ } => output + &callee.parenthesize() + "(" + 
                 &args.iter().map(|x| x.parenthesize()).collect::<Vec<_>>().join(", ") + "))",
             // _ => output + "unimplemented parenthesize",
@@ -263,16 +269,25 @@ impl Environment {
         self.values.insert(name.to_owned(), value);
     }
 
-    pub fn assign(&mut self, name: &Token, value: Literal) -> Result<(), RloxError> {
-        match self.values.get(&name.lexeme) {
-            Some(_) => match self.values.insert(name.lexeme.clone(), value) {
+    pub fn assign(&mut self, var: &Variable, value: Literal) -> Result<(), RloxError> {
+        match self.values.get(&var.name) {
+            Some(_) => match self.values.insert(var.name.clone(), value) {
                 Some(_) => Ok(()),
-                None => RloxError::new_err(ErrorType::ValueError, name.line,  "", "Failed to insert variable")
+                None => RloxError::new_err(ErrorType::ValueError, 0,  "", "Failed to insert variable") // TODO not ideal
             },
             None => match &self.enclosing {
-                Some(e) => e.borrow_mut().assign(name, value),
-                None => RloxError::new_err(ErrorType::ValueError, name.line, "", format!("Undefined variable {}", name.lexeme))
+                Some(e) => e.borrow_mut().assign(var, value),
+                None => RloxError::new_err(ErrorType::ValueError, 0, "", format!("Undefined variable {}", var.name))
             },
+        }
+    }
+
+    pub fn assign_at(&mut self, depth: usize, var: &Variable, value: Literal) -> Result<(), RloxError> {
+        if depth == 0 {
+            self.assign(var, value)
+        }
+        else {
+            self.enclosing.as_ref().expect("Resolver gave wrong depth for assign").borrow_mut().assign_at(depth - 1, var, value)
         }
     }
 
@@ -280,10 +295,19 @@ impl Environment {
         let result = self.values.get(name);
         // let enclosing = self.enclosing
         if result.is_some() {
-            return result.cloned();
+            result.cloned()
         }
         else {
-            return self.enclosing.as_ref()?.borrow().get(name);
+            self.enclosing.as_ref()?.borrow_mut().get(name)
+        }
+    }
+
+    pub fn get_at(&self, depth: usize, name: &String) -> Option<Literal> {
+        if depth == 0 {
+            self.get(name)
+        }
+        else {
+            self.enclosing.as_ref().expect("Resolver gave wrong depth for get").borrow_mut().get_at(depth - 1, name)
         }
     }
 }

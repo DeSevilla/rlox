@@ -1,15 +1,22 @@
 use std::collections::HashMap;
 use crate::interpreter::Interpreter;
-use rlox::{Stmt, Token, Expr, RloxError};
+use rlox::{Expr, RloxError, Stmt, Token, Variable};
 
 pub struct Resolver {
     scopes: Vec<HashMap<String, bool>>,
-    interp: Interpreter,
+    pub interpreter: Interpreter,
 }
 
 impl Resolver {
     pub fn new(interpreter: Interpreter) -> Resolver {
-        Resolver { scopes: Vec::new(), interp: interpreter }
+        Resolver { scopes: Vec::new(), interpreter }
+    }
+    
+    pub fn resolve_many(&mut self, stmts: &Vec<Stmt>) -> Result<(), RloxError> {
+        for stmt in stmts {
+            self.resolve(stmt)?;
+        }
+        Ok(())
     }
 
     pub fn resolve(&mut self, stmt: &Stmt) -> Result<(), RloxError> {
@@ -65,17 +72,15 @@ impl Resolver {
         match expr {
             Expr::Variable(v) => {
                 if let Some(scope) = self.scopes.last_mut() {
-                    if let Some(false) = scope.get(&v.lexeme) {
-                        return RloxError::new_err(rlox::ErrorType::NameError, v.line, "", "Can't read local variable in its own initializer");
+                    if let Some(false) = scope.get(&v.name) {
+                        return RloxError::new_err(rlox::ErrorType::NameError, v.loc, "", "Can't read local variable in its own initializer");
                     }
                 }
-                self.resolve_local(expr, v)?;
-                Ok(())
+                self.resolve_local(v)
             },
-            Expr::Assign { name, value } => {
+            Expr::Assign { var, value } => {
                 self.resolve_expr(value)?;
-                self.resolve_local(expr, name)?;
-                Ok(())
+                self.resolve_local(var)
             },
             Expr::Binary { left, right, .. } => {
                 self.resolve_expr(left)?;
@@ -102,10 +107,10 @@ impl Resolver {
         }
     }
 
-    pub fn resolve_local(&mut self, expr: &Expr, name: &Token) -> Result<(), RloxError> {
+    pub fn resolve_local(&mut self, var: &Variable) -> Result<(), RloxError> {
         for (i, scope) in self.scopes.iter().rev().enumerate() {
-            if scope.contains_key(&name.lexeme) {
-                self.interp.resolve(expr, i)?;
+            if scope.contains_key(&var.name) {
+                self.interpreter.resolve(var, i)
             }
         }
         Ok(())

@@ -1,5 +1,5 @@
 use std::vec::IntoIter;
-use rlox::{Token, TokTy, Expr, RloxError, Literal, ErrorType, Stmt};
+use rlox::{ErrorType, Expr, Literal, RloxError, Stmt, TokTy, Token, Variable};
 use lookahead::{Lookahead, lookahead};
 
 pub struct Parser {
@@ -242,11 +242,11 @@ impl Parser {
         match self.match_ty([TokTy::Equal].into_iter()) {
             Some(_) => {
                 let value = self.assignment()?;
-                let name = match &expr {
-                    Expr::Variable(name) => Ok(name.clone()),
+                let var = match &expr {
+                    Expr::Variable(var) => Ok(var.clone()),
                     _ => Err(self.error(self.previous.clone(), "Tried to assign to an invalid expression (must be a variable)")),
                 }?;
-                Ok(Expr::Assign { name, value: Box::new(value) })
+                Ok(Expr::Assign { var, value: Box::new(value) })
             }
             None => Ok(expr),
         }
@@ -324,7 +324,7 @@ impl Parser {
                     Ok(Expr::Grouping(Box::new(e)))
                 }
                 TokTy::Identifier => {
-                    Ok(Expr::Variable(t.clone()))
+                    Ok(Expr::Variable(Variable { name: t.lexeme.clone(), loc: t.line }))
                 }
                 _ => {let tok = self.lookahead(0).cloned(); Err(self.error(tok, "Unreachable token type mismatch".into())) }
             }

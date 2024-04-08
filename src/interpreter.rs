@@ -1,10 +1,10 @@
 use std::{cell::RefCell, rc::Rc, collections::HashMap, time::{SystemTime, UNIX_EPOCH}};
-use rlox::{Token, TokTy, Literal, Expr, Stmt, RloxError, ErrorType, NativeFunction, Environment};
+use rlox::{Environment, ErrorType, Expr, Literal, NativeFunction, RloxError, Stmt, TokTy, Variable};
 
 pub struct Interpreter {
     env: Rc<RefCell<Environment>>,
     global: Rc<RefCell<Environment>>,
-    locals: HashMap<Expr, usize>,
+    locals: HashMap<Variable, usize>,
 }
 
 impl Interpreter {
@@ -37,10 +37,15 @@ impl Interpreter {
         }
     }
 
-    pub fn resolve(&mut self, expr: &Expr, depth: usize) -> Result<(), RloxError> {
-        unimplemented!()
-        // self.locals.insert(&expr, depth);
-        // Ok(())
+    pub fn resolve(&mut self, var: &Variable, depth: usize) {
+        self.locals.insert(var.clone(), depth);
+        // match expr {
+        //     Expr::Variable(var) => {
+        //         self.locals.insert(var.clone(), depth);
+        //         Ok(())
+        //     },
+        //     _ => RloxError::new_err(ErrorType::TypeError, 0, "", format!("Tried to resolve non-variable expression {expr:?}"))
+        // }
     }
 
     pub fn call(&mut self, func: &Literal, args: Vec<Literal>) -> Result<Literal, RloxError> {
@@ -78,13 +83,21 @@ impl Interpreter {
         match expr {
             Expr::Literal(lit) => Ok(lit.clone()),
             Expr::Grouping(e) => self.evaluate(e),
-            Expr::Variable(name) => match self.env.borrow_mut().get(&name.lexeme) {
-                Some(lit) => Ok(lit.clone()),
-                None => RloxError::new_err(ErrorType::ValueError, name.line, "", format!("Variable {} is undefined", name.lexeme))
+            Expr::Variable(var) => { 
+                // match self.env.borrow_mut().get(&var.name) {
+                //     Some(lit) => Ok(lit.clone()),
+                //     None => RloxError::new_err(ErrorType::ValueError, 0, "", format!("Variable {} is undefined", var.name))
+                // }
+                let distance = self.locals.get(&var);
+                let val = match distance {
+                    Some(d) => self.env.borrow_mut().get_at(*d, &var.name),
+                    None => self.global.borrow_mut().get(&var.name),
+                };
+                val.ok_or(RloxError { ty: ErrorType::NameError, line: var.loc, info: "".into(), msg: format!("Variable not found: {}", var.name) })
             }
-            Expr::Assign { name, value } => {
+            Expr::Assign { var, value } => {
                 let val = self.evaluate(value)?;
-                self.env.borrow_mut().assign(name, val.clone())?;
+                self.env.borrow_mut().assign(var, val.clone())?;
                 Ok(val)
             }
             Expr::Unary { op, right } => {

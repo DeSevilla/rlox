@@ -10,10 +10,19 @@ pub mod interpreter;
 pub mod resolver;
 
 struct RloxRepl {
-    interpreter: interpreter::Interpreter,
+    resolver: resolver::Resolver,
+    // interpreter: interpreter::Interpreter,
 }
 
 impl RloxRepl {
+    fn new() -> Self {
+        let interp = interpreter::Interpreter::new();
+        let resolv = resolver::Resolver::new(interp);
+        RloxRepl {
+            resolver: resolv,
+        }
+    }
+
     fn run(&mut self, source: String) {
         let results = scanner::Scanner::new(&source).scan();
         let (tokens, errors): (Vec<Token>, Vec<RloxError>) = results.into_iter().partition_result();
@@ -27,7 +36,14 @@ impl RloxRepl {
             println!("Got parse errors: {errors:?}");
             return
         }
-        self.interpreter.interpret(tree);
+        match self.resolver.resolve_many(&tree) {
+            Ok(()) => (),
+            Err(e) => {
+                println!("Got variable resolution error: {e:?}");
+                return
+            }
+        }
+        self.resolver.interpreter.interpret(tree);
     }
 
     fn run_prompt(&mut self) {
@@ -62,7 +78,7 @@ impl RloxRepl {
                     Ok(entry) => { println!("{:?}", entry.path()); fs::read_to_string(entry.path()) },
                     Err(e) => { println!("Failed to open file; {e}"); continue; }
                 };
-                self.interpreter.clear_env();
+                self.resolver.interpreter.clear_env();
                 self.run(contents.expect("Could not read from file"));
             },
             Err(e) => println!("Could not read any matching files {e:?}")
@@ -72,9 +88,7 @@ impl RloxRepl {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut repl = RloxRepl {
-        interpreter: interpreter::Interpreter::new()
-    };
+    let mut repl = RloxRepl::new();
     if args.len() > 2 {
         println!("Usage: rlox [script]");
     }
